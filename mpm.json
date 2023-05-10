@@ -2,6 +2,6 @@
   "name": "nicerequests",
   "author": "txlyre",
   "description": "A bunch of functions wrapping around httpRequestRaw to make it easier.",
-  "version": "0.1",
+  "version": "0.2",
   "dependencies": []
 }

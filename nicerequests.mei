@@ -5,14 +5,17 @@ nice_method ::= NiceMethodGET
 nice_request ::= NiceRequest nice_method string (assoclist string string) bytes
 nice_response ::= NiceResponse int (assoclist string string) bytes
 
-nrCode? :: nice_response -> int
-nrCode? (NiceResponse code _ _) = code
+nrStatusCode? :: nice_response -> int
+nrStatusCode? (NiceResponse status_code _ _) = status_code
 
 nrHeaders? :: nice_response -> assoclist string string
 nrHeaders? (NiceResponse _ headers _) = headers
 
 nrBody? :: nice_response -> bytes
 nrBody? (NiceResponse _ _ body) = body
+
+nrBodyString? :: nice_response -> string
+nrBodyString? (NiceResponse _ _ body) = bytesToString body
 
 nrGetScheme :: string -> maybe string
 nrGetScheme url = scheme !? Nothing
@@ -125,10 +128,10 @@ nrPost :: string -> assoclist string string -> bytes -> nice_response
 nrPost url headers data = nrRequest $ NiceRequest NiceMethodPOST url (nrAppendDefaultUserAgent headers) data
 
 nrGetSimple :: string -> string
-nrGetSimple url = bytesToString $ nrBody? $ nrGet url []
+nrGetSimple url = nrBodyString? $ nrGet url []
 
 nrGetBinary :: string -> bytes
 nrGetBinary url = nrBody? $ nrGet url []
 
 nrPostSimple :: string -> string -> string -> string
-nrPostSimple url content_type data = bytesToString $ nrBody? $ nrPost url [("Content-Type", content_type)] $ stringToBytes data
+nrPostSimple url content_type data = nrBodyString? $ nrPost url [("Content-Type", content_type)] $ stringToBytes data
