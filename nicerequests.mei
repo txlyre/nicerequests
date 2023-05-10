@@ -1,0 +1,134 @@
+nice_method ::= NiceMethodGET
+              | NiceMethodHEAD
+              | NiceMethodPOST
+              | NiceMethodOPTIONS 
+nice_request ::= NiceRequest nice_method string (assoclist string string) bytes
+nice_response ::= NiceResponse int (assoclist string string) bytes
+
+nrCode? :: nice_response -> int
+nrCode? (NiceResponse code _ _) = code
+
+nrHeaders? :: nice_response -> assoclist string string
+nrHeaders? (NiceResponse _ headers _) = headers
+
+nrBody? :: nice_response -> bytes
+nrBody? (NiceResponse _ _ body) = body
+
+nrGetScheme :: string -> maybe string
+nrGetScheme url = scheme !? Nothing
+where
+  scheme = try $ lookup "scheme" $ parseUrl url
+
+nrGetHost :: string -> maybe string
+nrGetHost url = host !? Nothing
+where
+  host = try $ lookup "host" $ parseUrl url
+
+nrGetPort :: string -> maybe int
+nrGetPort url = if nothing? port then
+                  Nothing
+                else
+                  Just (just port |> parseInt)
+where
+  port = fromResult Nothing $ try $ lookup "port" $ parseUrl url
+
+nrGetPath :: string -> maybe string
+nrGetPath url = path !? Nothing
+where
+  path = try $ lookup "path" $ parseUrl url
+
+nrGetQuery :: string -> maybe string
+nrGetQuery url = query !? Nothing
+where
+  query = try $ lookup "query" $ parseUrl url
+
+nrRequest :: nice_request -> nice_response
+nrRequest (NiceRequest method url headers data) = doRequest request'             
+where
+  request' = case method of
+               NiceMethodGET    -> B"GET /" 
+                                   ++ stringToBytes path
+                                   ++ stringToBytes query
+                                   ++ B" HTTP/1.0\r\n"
+                                   ++ B"Host: " ++ stringToBytes host ++ B"\r\n"
+                                   ++ intercalate B"\r\n" (map stringToBytes headers')
+                                   ++ B"\r\n\r\n"
+             | NiceMethodPOST   -> B"POST /" 
+                                   ++ stringToBytes path
+                                   ++ stringToBytes query
+                                   ++ B" HTTP/1.0\r\n"
+                                   ++ B"Host: " ++ stringToBytes host ++ B"\r\n"
+                                   ++ B"Content-Length: " ++ stringToBytes (show $ len? data) ++ B"\r\n"
+                                   ++ intercalate B"\r\n" (map stringToBytes headers')
+                                   ++ B"\r\n\r\n"
+                                   ++ data
+             | NiceMethodHEAD   -> B"HEAD /" 
+                                   ++ stringToBytes path
+                                   ++ stringToBytes query
+                                   ++ B" HTTP/1.0\r\n"
+                                   ++ B"Host: " ++ stringToBytes host ++ B"\r\n"
+                                   ++ intercalate B"\r\n" (map stringToBytes headers')
+                                   ++ B"\r\n\r\n"
+            | NiceMethodOPTIONS -> B"OPTIONS /" 
+                                   ++ stringToBytes path
+                                   ++ stringToBytes query
+                                   ++ B" HTTP/1.0\r\n"
+                                   ++ B"Host: " ++ stringToBytes host ++ B"\r\n"
+                                   ++ intercalate B"\r\n" (map stringToBytes headers')
+                                   ++ B"\r\n\r\n"
+
+  doRequest request = processResponse $ httpRequestRaw host port isHTTPS request
+  processResponse response = NiceResponse status response_headers response_body
+    where
+      status = status_line ~~! R"^HTTP/.\.. (\d+) .*$"
+               |> parseInt
+      status_line = head response_head'
+      response_headers = drop 1 response_head'
+                         |> map (unpair . (~~ R"(\w+): (.*)"))
+
+      response_head' = response_head
+                       |> bytesToString
+                       |> explode "\r\n"
+      [response_head, response_body] = explode B"\r\n\r\n" response
+
+  isHTTPS = scheme == "https"
+
+  scheme = case nrGetScheme url ?? "http" of
+             "http"  -> "http"
+           | "https" -> "https"
+           | other   -> error "nrRequest: unsupported protocol: " ++ other
+
+  host = nrGetHost url ??! "nrRequest: malformed URL: missing scheme or host"
+
+  port = nrGetPort url ?? cond (scheme == "http") 80 443
+
+  path = nrGetPath url ?? ""
+
+  query = if not $ empty? query' then "?" ++ query' else query'
+  query' = nrGetQuery url ?? ""
+
+  headers' = map ((k, v) -> k ++ ": " ++ v) headers
+
+nrDefaultUserAgent = "nicerequests/1.0"
+
+nrAppendDefaultUserAgent :: assoclist string string -> assoclist string string
+nrAppendDefaultUserAgent headers
+= if has? "User-Agent" headers then
+    headers
+  else
+    expand "User-Agent" nrDefaultUserAgent headers
+
+nrGet :: string -> assoclist string string -> nice_response
+nrGet url headers = nrRequest $ NiceRequest NiceMethodGET url (nrAppendDefaultUserAgent headers) B""
+
+nrPost :: string -> assoclist string string -> bytes -> nice_response
+nrPost url headers data = nrRequest $ NiceRequest NiceMethodPOST url (nrAppendDefaultUserAgent headers) data
+
+nrGetSimple :: string -> string
+nrGetSimple url = bytesToString $ nrBody? $ nrGet url []
+
+nrGetBinary :: string -> bytes
+nrGetBinary url = nrBody? $ nrGet url []
+
+nrPostSimple :: string -> string -> string -> string
+nrPostSimple url content_type data = bytesToString $ nrBody? $ nrPost url [("Content-Type", content_type)] $ stringToBytes data
