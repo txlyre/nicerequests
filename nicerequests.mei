@@ -1,84 +1,85 @@
 nice_method ::= NiceMethodGET
               | NiceMethodHEAD
               | NiceMethodPOST
-              | NiceMethodOPTIONS 
+              | NiceMethodPUT
+              | NiceMethodDELETE
+              | NiceMethodOPTIONS
+              | NiceMethodPATCH
 nice_request ::= NiceRequest nice_method string (assoclist string string) bytes
 nice_response ::= NiceResponse int (assoclist string string) bytes
 
-nrStatusCode? :: nice_response -> int
-nrStatusCode? (NiceResponse status_code _ _) = status_code
+niceStatusCode? :: nice_response -> int
+niceStatusCode? (NiceResponse status_code _ _) = status_code
 
-nrHeaders? :: nice_response -> assoclist string string
-nrHeaders? (NiceResponse _ headers _) = headers
+niceHeaders? :: nice_response -> assoclist string string
+niceHeaders? (NiceResponse _ headers _) = headers
 
-nrBody? :: nice_response -> bytes
-nrBody? (NiceResponse _ _ body) = body
+niceBody? :: nice_response -> bytes
+niceBody? (NiceResponse _ _ body) = body
 
-nrBodyString? :: nice_response -> string
-nrBodyString? (NiceResponse _ _ body) = bytesToString body
+niceBodyString? :: nice_response -> string
+niceBodyString? (NiceResponse _ _ body) = bytesToString body
 
-nrGetScheme :: string -> maybe string
-nrGetScheme url = scheme !? Nothing
+niceGetScheme :: string -> maybe string
+niceGetScheme url = scheme !? Nothing
 where
   scheme = try $ lookup "scheme" $ parseUrl url
 
-nrGetHost :: string -> maybe string
-nrGetHost url = host !? Nothing
+niceGetHost :: string -> maybe string
+niceGetHost url = host !? Nothing
 where
   host = try $ lookup "host" $ parseUrl url
 
-nrGetPort :: string -> maybe int
-nrGetPort url = if nothing? port then
-                  Nothing
-                else
-                  Just (just port |> parseInt)
+niceGetPort :: string -> maybe int
+niceGetPort url = if nothing? port then
+                    Nothing
+                  else
+                    Just (just port |> parseInt)
 where
   port = fromResult Nothing $ try $ lookup "port" $ parseUrl url
 
-nrGetPath :: string -> maybe string
-nrGetPath url = path !? Nothing
+niceGetPath :: string -> maybe string
+niceGetPath url = path !? Nothing
 where
   path = try $ lookup "path" $ parseUrl url
 
-nrGetQuery :: string -> maybe string
-nrGetQuery url = query !? Nothing
+niceGetQuery :: string -> maybe string
+niceGetQuery url = query !? Nothing
 where
   query = try $ lookup "query" $ parseUrl url
 
-nrRequest :: nice_request -> nice_response
-nrRequest (NiceRequest method url headers data) = doRequest request'             
+niceRequest :: nice_request -> nice_response
+niceRequest (NiceRequest method url headers data)
+= case method of
+    NiceMethodGET     -> doRequestGETLike  "GET"
+  | NiceMethodHEAD    -> doRequestGETLike  "HEAD"
+  | NiceMethodPOST    -> doRequestPOSTLike "POST"
+  | NiceMethodPUT     -> doRequestPOSTLike "PUT"
+  | NiceMethodDELETE  -> doRequestGETLike  "DELETE"
+  | NiceMethodOPTIONS -> doRequestGETLike  "OPTIONS"
+  | NiceMethodPATCH   -> doRequestPOSTLike "PATCH"
 where
-  request' = case method of
-               NiceMethodGET    -> B"GET /" 
-                                   ++ stringToBytes path
-                                   ++ stringToBytes query
-                                   ++ B" HTTP/1.0\r\n"
-                                   ++ B"Host: " ++ stringToBytes host ++ B"\r\n"
-                                   ++ intercalate B"\r\n" (map stringToBytes headers')
-                                   ++ B"\r\n\r\n"
-             | NiceMethodPOST   -> B"POST /" 
-                                   ++ stringToBytes path
-                                   ++ stringToBytes query
-                                   ++ B" HTTP/1.0\r\n"
-                                   ++ B"Host: " ++ stringToBytes host ++ B"\r\n"
-                                   ++ B"Content-Length: " ++ stringToBytes (show $ len? data) ++ B"\r\n"
-                                   ++ intercalate B"\r\n" (map stringToBytes headers')
-                                   ++ B"\r\n\r\n"
-                                   ++ data
-             | NiceMethodHEAD   -> B"HEAD /" 
-                                   ++ stringToBytes path
-                                   ++ stringToBytes query
-                                   ++ B" HTTP/1.0\r\n"
-                                   ++ B"Host: " ++ stringToBytes host ++ B"\r\n"
-                                   ++ intercalate B"\r\n" (map stringToBytes headers')
-                                   ++ B"\r\n\r\n"
-            | NiceMethodOPTIONS -> B"OPTIONS /" 
-                                   ++ stringToBytes path
-                                   ++ stringToBytes query
-                                   ++ B" HTTP/1.0\r\n"
-                                   ++ B"Host: " ++ stringToBytes host ++ B"\r\n"
-                                   ++ intercalate B"\r\n" (map stringToBytes headers')
-                                   ++ B"\r\n\r\n"
+  doRequestGETLike method
+  = doRequest $ stringToBytes method
+                ++ B" /"
+                ++ stringToBytes path
+                ++ stringToBytes query
+                ++ B" HTTP/1.0\r\n"
+                ++ B"Host: " ++ stringToBytes host ++ B"\r\n"
+                ++ intercalate B"\r\n" (map stringToBytes headers')
+                ++ B"\r\n\r\n"
+     
+  doRequestPOSTLike method
+  = doRequest $ stringToBytes method
+                ++ B" /"
+                ++ stringToBytes path
+                ++ stringToBytes query
+                ++ B" HTTP/1.0\r\n"
+                ++ B"Host: " ++ stringToBytes host ++ B"\r\n"
+                ++ B"Content-Length: " ++ stringToBytes (show $ len? data) ++ B"\r\n"
+                ++ intercalate B"\r\n" (map stringToBytes headers')
+                ++ B"\r\n\r\n"
+                ++ data 
 
   doRequest request = processResponse $ httpRequestRaw host port isHTTPS request
   processResponse response = NiceResponse status response_headers response_body
@@ -96,42 +97,57 @@ where
 
   isHTTPS = scheme == "https"
 
-  scheme = case nrGetScheme url ?? "http" of
+  scheme = case niceGetScheme url ?? "http" of
              "http"  -> "http"
            | "https" -> "https"
-           | other   -> error "nrRequest: unsupported protocol: " ++ other
+           | other   -> error "niceRequest: unsupported protocol: " ++ other
 
-  host = nrGetHost url ??! "nrRequest: malformed URL: missing scheme or host"
+  host = niceGetHost url ??! "niceRequest: malformed URL: missing scheme or host"
 
-  port = nrGetPort url ?? cond (scheme == "http") 80 443
+  port = niceGetPort url ?? cond (scheme == "http") 80 443
 
-  path = nrGetPath url ?? ""
+  path = niceGetPath url ?? ""
 
   query = if not $ empty? query' then "?" ++ query' else query'
-  query' = nrGetQuery url ?? ""
+  query' = niceGetQuery url ?? ""
 
   headers' = map ((k, v) -> k ++ ": " ++ v) headers
 
-nrDefaultUserAgent = "nicerequests/1.0"
+niceDefaultUserAgent = "nicerequests/0.3"
 
-nrAppendDefaultUserAgent :: assoclist string string -> assoclist string string
-nrAppendDefaultUserAgent headers
+niceAppendDefaultUserAgent :: assoclist string string -> assoclist string string
+niceAppendDefaultUserAgent headers
 = if has? "User-Agent" headers then
     headers
   else
-    expand "User-Agent" nrDefaultUserAgent headers
+    expand "User-Agent" niceDefaultUserAgent headers
 
-nrGet :: string -> assoclist string string -> nice_response
-nrGet url headers = nrRequest $ NiceRequest NiceMethodGET url (nrAppendDefaultUserAgent headers) B""
+niceGet :: string -> assoclist string string -> nice_response
+niceGet url headers = niceRequest $ NiceRequest NiceMethodGET url (niceAppendDefaultUserAgent headers) B""
 
-nrPost :: string -> assoclist string string -> bytes -> nice_response
-nrPost url headers data = nrRequest $ NiceRequest NiceMethodPOST url (nrAppendDefaultUserAgent headers) data
+niceHead :: string -> assoclist string string -> nice_response
+niceHead url headers = niceRequest $ NiceRequest NiceMethodHEAD url (niceAppendDefaultUserAgent headers) B""
 
-nrGetSimple :: string -> string
-nrGetSimple url = nrBodyString? $ nrGet url []
+nicePost :: string -> assoclist string string -> bytes -> nice_response
+nicePost url headers data = niceRequest $ NiceRequest NiceMethodPOST url (niceAppendDefaultUserAgent headers) data
 
-nrGetBinary :: string -> bytes
-nrGetBinary url = nrBody? $ nrGet url []
+nicePut :: string -> assoclist string string -> bytes -> nice_response
+nicePut url headers data = niceRequest $ NiceRequest NiceMethodPUT url (niceAppendDefaultUserAgent headers) data
 
-nrPostSimple :: string -> string -> string -> string
-nrPostSimple url content_type data = nrBodyString? $ nrPost url [("Content-Type", content_type)] $ stringToBytes data
+niceDelete :: string -> assoclist string string -> nice_response
+niceDelete url headers = niceRequest $ NiceRequest NiceMethodDELETE url (niceAppendDefaultUserAgent headers) B""
+
+niceOptions :: string -> assoclist string string -> nice_response
+niceOptions url headers = niceRequest $ NiceRequest NiceMethodOPTIONS url (niceAppendDefaultUserAgent headers) B""
+
+nicePatch :: string -> assoclist string string -> bytes -> nice_response
+nicePatch url headers data = niceRequest $ NiceRequest NiceMethodPATCH url (niceAppendDefaultUserAgent headers) data
+
+niceGetSimple :: string -> string
+niceGetSimple url = niceBodyString? $ niceGet url []
+
+niceGetBinary :: string -> bytes
+niceGetBinary url = niceBody? $ niceGet url []
+
+nicePostSimple :: string -> string -> string -> string
+nicePostSimple url content_type data = niceBodyString? $ nicePost url [("Content-Type", content_type)] $ stringToBytes data
